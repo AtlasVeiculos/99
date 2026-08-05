@@ -1,0 +1,771 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1" />
+<title>Painel do Carro — Operação 99</title>
+<meta name="description" content="Contabilidade da operação de motorista de aplicativo: km, ganhos e gastos do carro." />
+<link rel="icon" href="data:," />
+<link rel="preconnect" href="https://fonts.googleapis.com" />
+<link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@500;600;700&family=IBM+Plex+Mono:wght@500;600&family=Inter:wght@400;500;600&display=swap" rel="stylesheet" />
+<style>
+:root {
+  --bg: #14161A;
+  --card: #1E2126;
+  --card-alt: #14161A;
+  --border: #2A2E35;
+  --text: #ECEAE4;
+  --muted: #8B8F98;
+  --amber: #E8B430;
+  --green: #3FA796;
+  --red: #E85D5D;
+}
+
+* { box-sizing: border-box; }
+
+html, body {
+  margin: 0;
+  padding: 0;
+  background: var(--bg);
+  color: var(--text);
+  font-family: 'Inter', system-ui, sans-serif;
+  -webkit-font-smoothing: antialiased;
+}
+
+.mono { font-family: 'IBM Plex Mono', monospace; }
+.display { font-family: 'Space Grotesk', sans-serif; }
+
+#app { min-height: 100vh; }
+
+.wrap {
+  max-width: 720px;
+  margin: 0 auto;
+  padding: 24px 16px 96px;
+}
+
+.header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 24px;
+}
+.header .brand { display: flex; align-items: center; gap: 10px; }
+.header .logo {
+  width: 32px; height: 32px; border-radius: 8px;
+  background: var(--amber);
+  display: flex; align-items: center; justify-content: center;
+  color: var(--bg);
+}
+.header .title { font-size: 17px; font-weight: 600; line-height: 1; }
+.header .subtitle { font-size: 11px; color: var(--muted); margin-top: 2px; }
+.header .saving { font-size: 11px; color: var(--green); }
+
+.card {
+  background: var(--card);
+  border: 1px solid var(--border);
+  border-radius: 14px;
+  padding: 18px;
+  margin-bottom: 16px;
+}
+.card.center { display: flex; flex-direction: column; align-items: center; }
+
+.eyebrow {
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  color: var(--muted);
+  margin-bottom: 8px;
+}
+
+.grid-2 { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
+
+.mini-box {
+  background: var(--card-alt);
+  border-radius: 10px;
+  padding: 10px;
+  text-align: center;
+}
+.mini-box .label { font-size: 9px; text-transform: uppercase; letter-spacing: 0.08em; color: var(--muted); }
+.mini-box .value { font-family: 'IBM Plex Mono', monospace; font-size: 14px; margin-top: 4px; }
+
+.stat-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 9px 0;
+  border-bottom: 1px solid var(--border);
+  font-size: 13px;
+}
+.stat-row:last-child { border-bottom: none; }
+.stat-row .label { display: flex; align-items: center; gap: 8px; color: var(--muted); }
+.stat-row .value { font-family: 'IBM Plex Mono', monospace; }
+
+.big-stat { font-family: 'IBM Plex Mono', monospace; font-size: 22px; }
+
+.field { margin-bottom: 14px; }
+.field label {
+  font-size: 12px; color: var(--muted); display: flex; align-items: center; gap: 6px; margin-bottom: 5px;
+}
+.field input {
+  width: 100%;
+  background: var(--card-alt);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  padding: 10px 12px;
+  color: var(--text);
+  font-family: 'IBM Plex Mono', monospace;
+  font-size: 13px;
+  outline: none;
+}
+.field input:focus { border-color: var(--amber); }
+
+.btn-primary {
+  width: 100%;
+  background: var(--amber);
+  color: var(--bg);
+  font-weight: 600;
+  border: none;
+  border-radius: 10px;
+  padding: 12px;
+  font-size: 14px;
+  cursor: pointer;
+  margin-top: 6px;
+}
+.btn-primary:hover { opacity: 0.9; }
+
+.btn-ghost {
+  background: transparent;
+  border: 1px solid var(--border);
+  color: var(--muted);
+  border-radius: 10px;
+  padding: 10px;
+  font-size: 13px;
+  cursor: pointer;
+  width: 100%;
+}
+.btn-ghost:hover { border-color: var(--amber); color: var(--amber); }
+
+.btn-danger { color: var(--red); border-color: var(--border); }
+.btn-danger:hover { border-color: var(--red); color: var(--red); }
+
+.hist-item { margin-bottom: 12px; }
+.hist-top { display: flex; align-items: center; justify-content: space-between; margin-bottom: 8px; }
+.hist-date { font-family: 'IBM Plex Mono', monospace; font-size: 13px; color: var(--muted); }
+.hist-actions { display: flex; align-items: center; gap: 12px; }
+.hist-detail { display: grid; grid-template-columns: 1fr 1fr; gap: 4px 16px; font-size: 12px; color: var(--muted); }
+.hist-detail span b { color: var(--text); font-weight: 500; }
+
+.icon-btn { background: none; border: none; color: var(--muted); cursor: pointer; padding: 2px; display: flex; }
+.icon-btn:hover { color: var(--red); }
+
+.empty { text-align: center; color: var(--muted); font-size: 13px; padding: 24px 0; }
+
+.nav {
+  position: fixed;
+  bottom: 0; left: 0; right: 0;
+  background: #1A1D22;
+  border-top: 1px solid var(--border);
+}
+.nav-inner {
+  max-width: 720px;
+  margin: 0 auto;
+  display: flex;
+}
+.nav button {
+  flex: 1;
+  background: none;
+  border: none;
+  color: var(--muted);
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 3px;
+  padding: 9px 0;
+  cursor: pointer;
+}
+.nav button.active { color: var(--amber); }
+.nav button .nav-label {
+  font-size: 9px;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+}
+
+.note {
+  font-size: 12px;
+  color: var(--muted);
+  line-height: 1.5;
+  margin-bottom: 14px;
+}
+
+.footnote { font-size: 11px; color: var(--muted); margin-top: 6px; }
+
+.backup-row { display: flex; gap: 10px; margin-top: 8px; }
+
+.loading {
+  min-height: 100vh;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--muted);
+}
+
+svg.icon { display: inline-block; vertical-align: middle; }
+
+@media (max-width: 380px) {
+  .grid-2 { grid-template-columns: 1fr 1fr; }
+  .big-stat { font-size: 18px; }
+}
+
+</style>
+</head>
+<body>
+  <div id="app"></div>
+  <script>
+// ============================================================
+// Painel do Carro — Operação 99
+// Site estático, sem build step. Dados salvos no localStorage
+// do navegador (por dispositivo). Use Exportar/Importar em
+// Config para levar os dados de um aparelho pra outro.
+// ============================================================
+
+// ---------- ícones (svg minimalistas, sem dependência externa) ----------
+const ICONS = {
+  home: '<polyline points="3 11 12 4 21 11"/><path d="M5 10v10h14V10"/>',
+  plus: '<line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/>',
+  bar: '<line x1="6" y1="20" x2="6" y2="10"/><line x1="12" y1="20" x2="12" y2="4"/><line x1="18" y1="20" x2="18" y2="14"/>',
+  trend: '<polyline points="4 17 10 11 14 15 20 6"/><polyline points="14 6 20 6 20 12"/>',
+  sliders: '<line x1="4" y1="6" x2="20" y2="6"/><circle cx="9" cy="6" r="2"/><line x1="4" y1="12" x2="20" y2="12"/><circle cx="15" cy="12" r="2"/><line x1="4" y1="18" x2="20" y2="18"/><circle cx="8" cy="18" r="2"/>',
+  car: '<rect x="3" y="11" width="18" height="6" rx="2"/><circle cx="7.5" cy="17.5" r="1.5"/><circle cx="16.5" cy="17.5" r="1.5"/><path d="M5 11l2-5h10l2 5"/>',
+  fuel: '<rect x="4" y="4" width="10" height="16" rx="1"/><path d="M14 9h2a2 2 0 0 1 2 2v6a2 2 0 0 0 2 2"/><line x1="6" y1="9" x2="12" y2="9"/>',
+  clock: '<circle cx="12" cy="12" r="9"/><polyline points="12 7 12 12 16 14"/>',
+  wrench: '<path d="M17 3a4 4 0 0 0-4.9 4.9L4 16l3 3 8.1-8.1A4 4 0 0 0 17 3z"/>',
+  briefcase: '<rect x="3" y="8" width="18" height="12" rx="2"/><path d="M8 8V6a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/>',
+  trash: '<polyline points="4 7 20 7"/><path d="M6 7l1 13a2 2 0 0 0 2 2h6a2 2 0 0 0 2-2l1-13"/><path d="M10 7V4h4v3"/>',
+  gauge: '<circle cx="12" cy="12" r="9"/><line x1="12" y1="12" x2="16" y2="9"/>',
+};
+function icon(name, size = 15) {
+  return `<svg class="icon" width="${size}" height="${size}" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">${ICONS[name] || ""}</svg>`;
+}
+
+// ---------- storage ----------
+const SKEY = "painel99_settings";
+const EKEY = "painel99_entries";
+
+const defaultSettings = {
+  kmInicial: 0,
+  valorCarro: 0,
+  ganhoAcumulado99Inicial: 0,
+  metaDiaria: 200,
+  metaHora: 25,
+  custosFixosMensais: 0,
+};
+
+function loadSettings() {
+  try {
+    const raw = localStorage.getItem(SKEY);
+    return raw ? { ...defaultSettings, ...JSON.parse(raw) } : { ...defaultSettings };
+  } catch {
+    return { ...defaultSettings };
+  }
+}
+function saveSettingsToStorage(s) {
+  localStorage.setItem(SKEY, JSON.stringify(s));
+}
+function loadEntries() {
+  try {
+    const raw = localStorage.getItem(EKEY);
+    return raw ? JSON.parse(raw) : [];
+  } catch {
+    return [];
+  }
+}
+function saveEntriesToStorage(list) {
+  localStorage.setItem(EKEY, JSON.stringify(list));
+}
+
+// ---------- helpers ----------
+const fmtR = (n) =>
+  (n < 0 ? "-R$ " : "R$ ") + Math.abs(n || 0).toLocaleString("pt-BR", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+const fmtKm = (n) => (n || 0).toLocaleString("pt-BR", { maximumFractionDigits: 1 }) + " km";
+const todayISO = () => new Date().toISOString().slice(0, 10);
+const esc = (s) => String(s ?? "").replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
+
+// ---------- state ----------
+let state = {
+  view: "inicio",
+  settings: defaultSettings,
+  entries: [],
+  savingMsg: "",
+};
+
+function init() {
+  state.settings = loadSettings();
+  state.entries = loadEntries();
+  render();
+}
+
+function setView(v) {
+  state.view = v;
+  render();
+}
+
+function flashSaved(msg) {
+  state.savingMsg = msg;
+  render();
+  setTimeout(() => {
+    state.savingMsg = "";
+    const el = document.querySelector(".saving");
+    if (el) el.textContent = "";
+  }, 2000);
+}
+
+function persistSettings(next) {
+  state.settings = next;
+  saveSettingsToStorage(next);
+}
+function persistEntries(next) {
+  state.entries = next;
+  saveEntriesToStorage(next);
+}
+
+// ---------- cálculos ----------
+function computeTotals(entries) {
+  const sum = (k) => entries.reduce((a, e) => a + (Number(e[k]) || 0), 0);
+  const ganho99 = sum("ganho99");
+  const ganhoParticular = sum("ganhoParticular");
+  const gastoCombustivel = sum("gastoCombustivel");
+  const gastoOutros = sum("gastoOutros");
+  const km = sum("km");
+  const horas = sum("horas");
+  const ganhoTotal = ganho99 + ganhoParticular;
+  const gastoTotal = gastoCombustivel + gastoOutros;
+  const lucroApp = ganho99 - gastoTotal; // saldo 99 x carro, acumulado
+  const lucroTotal = ganhoTotal - gastoTotal; // lucro total acumulado (com particular)
+  return { ganho99, ganhoParticular, gastoCombustivel, gastoOutros, km, horas, ganhoTotal, gastoTotal, lucroApp, lucroTotal };
+}
+
+function computeHoje(entries) {
+  const todays = entries.filter((e) => e.date === todayISO());
+  const sum = (k) => todays.reduce((a, e) => a + (Number(e[k]) || 0), 0);
+  const ganho99 = sum("ganho99");
+  const ganhoParticular = sum("ganhoParticular");
+  const ganhoTotal = ganho99 + ganhoParticular;
+  const gastoTotal = sum("gastoCombustivel") + sum("gastoOutros");
+  const saldo99 = ganho99 - gastoTotal;
+  const lucroTotal = ganhoTotal - gastoTotal;
+  return { ganho99, ganhoParticular, ganhoTotal, gastoTotal, saldo99, lucroTotal, horas: sum("horas") };
+}
+
+function chartData(entries) {
+  const map = {};
+  entries.forEach((e) => {
+    if (!map[e.date]) map[e.date] = { date: e.date, ganho: 0, gasto: 0 };
+    map[e.date].ganho += (Number(e.ganho99) || 0) + (Number(e.ganhoParticular) || 0);
+    map[e.date].gasto += (Number(e.gastoCombustivel) || 0) + (Number(e.gastoOutros) || 0);
+  });
+  return Object.values(map)
+    .sort((a, b) => a.date.localeCompare(b.date))
+    .slice(-14)
+    .map((d) => ({ ...d, saldo: d.ganho - d.gasto, label: d.date.slice(5) }));
+}
+
+// ---------- gauge svg (elemento de assinatura) ----------
+function gaugeSVG(pct, label, sub, tone) {
+  const clamped = Math.max(0, Math.min(1, pct || 0));
+  const angle = clamped * 180;
+  const cx = 100, cy = 100, r = 78;
+  const toRad = (a) => ((a - 180) * Math.PI) / 180;
+  const x = cx + r * Math.cos(toRad(angle));
+  const y = cy + r * Math.sin(toRad(angle));
+  const color = tone === "neg" ? "#E85D5D" : tone === "warn" ? "#E8B430" : "#3FA796";
+  return `
+    <svg width="200" height="118" viewBox="0 0 200 118">
+      <path d="M 22 100 A 78 78 0 0 1 178 100" fill="none" stroke="#2A2E35" stroke-width="14" stroke-linecap="round"/>
+      <path d="M 22 100 A 78 78 0 0 1 ${x.toFixed(2)} ${y.toFixed(2)}" fill="none" stroke="${color}" stroke-width="14" stroke-linecap="round"/>
+      <circle cx="${cx}" cy="${cy}" r="3" fill="#8B8F98"/>
+    </svg>
+    <div style="margin-top:-24px;text-align:center;">
+      <div class="mono" style="font-size:22px;color:${color};">${esc(label)}</div>
+      <div class="eyebrow" style="margin-top:2px;">${esc(sub)}</div>
+    </div>
+  `;
+}
+
+// ---------- gráficos svg simples (sem dependência) ----------
+function lineChartSVG(data, width = 600, height = 180) {
+  const pad = 28;
+  if (!data.length) return `<div class="empty">Sem lançamentos ainda pra mostrar no gráfico.</div>`;
+  const allVals = data.flatMap((d) => [d.ganho, d.gasto]);
+  const max = Math.max(...allVals, 10) * 1.15;
+  const stepX = data.length > 1 ? (width - 2 * pad) / (data.length - 1) : 0;
+  const x = (i) => pad + i * stepX;
+  const y = (v) => height - pad - (v / max) * (height - 2 * pad);
+  const line = (key) => data.map((d, i) => `${x(i).toFixed(1)},${y(d[key]).toFixed(1)}`).join(" ");
+  const labels = data
+    .map((d, i) => `<text x="${x(i).toFixed(1)}" y="${height - 6}" font-size="9" fill="#8B8F98" text-anchor="middle">${esc(d.label)}</text>`)
+    .join("");
+  return `
+    <svg width="100%" height="${height}" viewBox="0 0 ${width} ${height}" preserveAspectRatio="xMidYMid meet">
+      <line x1="${pad}" y1="${height - pad}" x2="${width - pad}" y2="${height - pad}" stroke="#2A2E35"/>
+      <polyline points="${line("ganho")}" fill="none" stroke="#3FA796" stroke-width="2"/>
+      <polyline points="${line("gasto")}" fill="none" stroke="#E85D5D" stroke-width="2"/>
+      ${labels}
+    </svg>
+    <div style="display:flex;gap:16px;font-size:11px;color:var(--muted);margin-top:6px;">
+      <span><span style="color:#3FA796;">●</span> Ganho</span>
+      <span><span style="color:#E85D5D;">●</span> Gasto</span>
+    </div>
+  `;
+}
+
+function barChartSVG(data, key, width = 600, height = 160) {
+  const pad = 24;
+  if (!data.length) return `<div class="empty">Sem lançamentos ainda pra mostrar no gráfico.</div>`;
+  const vals = data.map((d) => d[key]);
+  const maxAbs = Math.max(...vals.map(Math.abs), 10) * 1.15;
+  const zeroY = height / 2;
+  const scale = (height / 2 - pad / 2) / maxAbs;
+  const bw = ((width - 2 * pad) / data.length) * 0.55;
+  const gap = (width - 2 * pad) / data.length;
+  const bars = data
+    .map((d, i) => {
+      const v = d[key];
+      const barH = Math.abs(v) * scale;
+      const bx = pad + i * gap + (gap - bw) / 2;
+      const by = v >= 0 ? zeroY - barH : zeroY;
+      const color = v >= 0 ? "#E8B430" : "#E85D5D";
+      return `<rect x="${bx.toFixed(1)}" y="${by.toFixed(1)}" width="${bw.toFixed(1)}" height="${Math.max(barH, 1).toFixed(1)}" rx="2" fill="${color}"/>`;
+    })
+    .join("");
+  const labels = data
+    .map((d, i) => {
+      const bx = pad + i * gap + gap / 2;
+      return `<text x="${bx.toFixed(1)}" y="${height - 4}" font-size="9" fill="#8B8F98" text-anchor="middle">${esc(d.label)}</text>`;
+    })
+    .join("");
+  return `
+    <svg width="100%" height="${height}" viewBox="0 0 ${width} ${height}" preserveAspectRatio="xMidYMid meet">
+      <line x1="${pad}" y1="${zeroY}" x2="${width - pad}" y2="${zeroY}" stroke="#2A2E35"/>
+      ${bars}
+      ${labels}
+    </svg>
+  `;
+}
+
+// ---------- views ----------
+function viewInicio() {
+  const totals = computeTotals(state.entries);
+  const hoje = computeHoje(state.entries);
+  const kmTotalDesdeCompra = state.settings.kmInicial + totals.km;
+  const rsPorHoraGeral = totals.horas > 0 ? totals.ganhoTotal / totals.horas : 0;
+  const rsPorKm = totals.km > 0 ? totals.ganho99 / totals.km : 0;
+  const custoPorKm = totals.km > 0 ? totals.gastoTotal / totals.km : 0;
+  const faltaMeta = Math.max(0, state.settings.metaDiaria - hoje.ganho99);
+  const tone = hoje.saldo99 > 0 ? "pos" : hoje.saldo99 < 0 ? "neg" : "warn";
+  const gaugePct = state.settings.metaDiaria > 0 ? hoje.ganho99 / state.settings.metaDiaria : 0;
+  const sub = tone === "neg" ? "a 99 ainda não cobre o carro" : tone === "pos" ? "carro pago, sobrou lucro" : "no zero a zero";
+
+  return `
+    <div class="card center">
+      <div class="eyebrow">99 x custo do carro hoje</div>
+      ${gaugeSVG(gaugePct, fmtR(hoje.saldo99), sub, tone)}
+      <div class="grid-2" style="width:100%;margin-top:10px;">
+        <div class="mini-box">
+          <div class="label">Meta do dia (99)</div>
+          <div class="value">${fmtR(state.settings.metaDiaria)}</div>
+        </div>
+        <div class="mini-box">
+          <div class="label">Falta p/ meta</div>
+          <div class="value" style="color:${faltaMeta > 0 ? "#E8B430" : "#3FA796"}">${faltaMeta > 0 ? fmtR(faltaMeta) : "Meta batida"}</div>
+        </div>
+      </div>
+    </div>
+
+    <div class="grid-2">
+      <div class="card">
+        <div class="eyebrow">Ganho na 99 hoje</div>
+        <div class="big-stat" style="color:#3FA796;">${fmtR(hoje.ganho99)}</div>
+      </div>
+      <div class="card">
+        <div class="eyebrow">Gasto do carro hoje</div>
+        <div class="big-stat" style="color:#E85D5D;">${fmtR(hoje.gastoTotal)}</div>
+      </div>
+    </div>
+
+    <div class="card">
+      <div style="display:flex;align-items:center;justify-content:space-between;">
+        <div class="eyebrow" style="margin-bottom:0;">Lucro do dia (99 + particular − gasto)</div>
+        <div class="mono" style="font-size:16px;color:${hoje.lucroTotal >= 0 ? "#3FA796" : "#E85D5D"}">${fmtR(hoje.lucroTotal)}</div>
+      </div>
+      ${hoje.ganhoParticular > 0 ? `<div class="footnote">inclui ${fmtR(hoje.ganhoParticular)} de renda particular — não entra na conta de "a 99 paga o carro"</div>` : ""}
+    </div>
+
+    <div class="card">
+      <div class="eyebrow">Panorama geral (desde o início)</div>
+      <div class="stat-row"><span class="label">${icon("trend")} Saldo 99 x carro (acumulado)</span><span class="value" style="color:${totals.lucroApp >= 0 ? "#3FA796" : "#E85D5D"}">${fmtR(totals.lucroApp)}</span></div>
+      <div class="stat-row"><span class="label">${icon("briefcase")} Lucro total acumulado (com particular)</span><span class="value" style="color:${totals.lucroTotal >= 0 ? "#3FA796" : "#E85D5D"}">${fmtR(totals.lucroTotal)}</span></div>
+      <div class="stat-row"><span class="label">${icon("gauge")} R$/hora (geral)</span><span class="value">${fmtR(rsPorHoraGeral)}</span></div>
+      <div class="stat-row"><span class="label">${icon("fuel")} R$ ganho por km rodado</span><span class="value">${fmtR(rsPorKm)}</span></div>
+      <div class="stat-row"><span class="label">${icon("wrench")} Custo por km rodado</span><span class="value">${fmtR(custoPorKm)}</span></div>
+      <div class="stat-row"><span class="label">${icon("car")} Km total desde a compra</span><span class="value">${fmtKm(kmTotalDesdeCompra)}</span></div>
+      <div class="stat-row"><span class="label">${icon("briefcase")} Ganho acumulado 99</span><span class="value">${fmtR(totals.ganho99)}</span></div>
+      <div class="stat-row"><span class="label">${icon("wrench")} Ganho acumulado particular</span><span class="value">${fmtR(totals.ganhoParticular)}</span></div>
+    </div>
+  `;
+}
+
+function viewLancar() {
+  return `
+    <div class="card">
+      <div class="eyebrow">Lançamento do dia</div>
+      <div class="field">
+        <label>Data</label>
+        <input type="date" id="f-date" value="${todayISO()}" />
+      </div>
+      <div class="field"><label>${icon("car")} Km rodado no dia (total)</label><input type="number" step="0.1" id="f-km" placeholder="0" /></div>
+      <div class="field"><label>${icon("briefcase")} Ganho na 99 (R$)</label><input type="number" step="0.01" id="f-ganho99" placeholder="0" /></div>
+      <div class="field"><label>${icon("wrench")} Ganho particular / escritórios (R$)</label><input type="number" step="0.01" id="f-ganhoParticular" placeholder="0" /></div>
+      <div class="field"><label>${icon("fuel")} Gasto com combustível (R$)</label><input type="number" step="0.01" id="f-gastoCombustivel" placeholder="0" /></div>
+      <div class="field"><label>${icon("wrench")} Outros gastos do carro (R$)</label><input type="number" step="0.01" id="f-gastoOutros" placeholder="0" /></div>
+      <div class="field"><label>${icon("clock")} Horas trabalhadas</label><input type="number" step="0.1" id="f-horas" placeholder="0" /></div>
+      <button class="btn-primary" id="btn-save-entry">Salvar lançamento</button>
+    </div>
+  `;
+}
+
+function viewHistorico() {
+  const sorted = [...state.entries].sort((a, b) => b.date.localeCompare(a.date));
+  if (!sorted.length) {
+    return `<div class="card"><div class="empty">Nenhum lançamento ainda. Adicione o primeiro em "Lançar dia".</div></div>`;
+  }
+  return sorted
+    .map((e) => {
+      const gasto = e.gastoCombustivel + e.gastoOutros;
+      const saldo99 = e.ganho99 - gasto;
+      return `
+        <div class="card hist-item">
+          <div class="hist-top">
+            <span class="hist-date">${esc(e.date)}</span>
+            <div class="hist-actions">
+              <span class="mono" style="color:${saldo99 >= 0 ? "#3FA796" : "#E85D5D"}">${fmtR(saldo99)}</span>
+              <button class="icon-btn" data-del="${e.id}">${icon("trash", 15)}</button>
+            </div>
+          </div>
+          <div class="hist-detail">
+            <span>Ganho 99: <b>${fmtR(e.ganho99)}</b></span>
+            <span>Ganho particular: <b>${fmtR(e.ganhoParticular)}</b></span>
+            <span>Km rodado: <b>${fmtKm(e.km)}</b></span>
+            <span>Combustível: <b>${fmtR(e.gastoCombustivel)}</b></span>
+            <span>Outros gastos: <b>${fmtR(e.gastoOutros)}</b></span>
+            <span>Horas: <b>${e.horas}h</b></span>
+          </div>
+        </div>
+      `;
+    })
+    .join("");
+}
+
+function viewAnalise() {
+  const totals = computeTotals(state.entries);
+  const data = chartData(state.entries);
+  const kmTotalDesdeCompra = state.settings.kmInicial + totals.km;
+  const rsPorKm = totals.km > 0 ? totals.ganho99 / totals.km : 0;
+  const custoPorKm = totals.km > 0 ? totals.gastoTotal / totals.km : 0;
+  return `
+    <div class="card">
+      <div class="eyebrow">Ganho x Gasto (últimos lançamentos)</div>
+      ${lineChartSVG(data)}
+    </div>
+    <div class="card">
+      <div class="eyebrow">Saldo diário</div>
+      ${barChartSVG(data, "saldo")}
+    </div>
+    <div class="card">
+      <div class="eyebrow">Eficiência</div>
+      <div class="stat-row"><span class="label">${icon("car")} Km rodado lançado</span><span class="value">${fmtKm(totals.km)}</span></div>
+      <div class="stat-row"><span class="label">${icon("gauge")} Km total desde a compra</span><span class="value">${fmtKm(kmTotalDesdeCompra)}</span></div>
+      <div class="stat-row"><span class="label">${icon("fuel")} R$ ganho por km (99)</span><span class="value">${fmtR(rsPorKm)}</span></div>
+      <div class="stat-row"><span class="label">${icon("wrench")} Custo por km</span><span class="value">${fmtR(custoPorKm)}</span></div>
+    </div>
+  `;
+}
+
+function viewConfig() {
+  const s = state.settings;
+  return `
+    <div class="card">
+      <div class="eyebrow">Configurações e dados da planilha</div>
+      <p class="note">Preencha aqui os totais que você já tem acumulados antes de começar a lançar dia a dia — assim o painel soma certo desde o início da operação.</p>
+      <div class="field"><label>Km rodado até hoje (da sua planilha)</label><input type="number" step="1" id="s-kmInicial" value="${s.kmInicial}" /></div>
+      <div class="field"><label>Valor pago no carro (R$)</label><input type="number" step="0.01" id="s-valorCarro" value="${s.valorCarro}" /></div>
+      <div class="field"><label>Ganho já acumulado na 99 até hoje, se não lançado dia a dia (R$)</label><input type="number" step="0.01" id="s-ganhoAcumulado99Inicial" value="${s.ganhoAcumulado99Inicial}" /></div>
+      <div class="field"><label>Meta de ganho por dia — na 99 (R$)</label><input type="number" step="0.01" id="s-metaDiaria" value="${s.metaDiaria}" /></div>
+      <div class="field"><label>Meta de ganho por hora (R$)</label><input type="number" step="0.01" id="s-metaHora" value="${s.metaHora}" /></div>
+      <div class="field"><label>Custos fixos mensais do carro — financiamento, seguro etc. (R$)</label><input type="number" step="0.01" id="s-custosFixosMensais" value="${s.custosFixosMensais}" /></div>
+      <button class="btn-primary" id="btn-save-settings">Salvar configurações</button>
+    </div>
+    <div class="card">
+      <div class="eyebrow">Backup dos dados</div>
+      <p class="note">Os dados ficam salvos só neste navegador/aparelho. Exporte um arquivo pra guardar ou levar pra outro aparelho, e importe quando precisar.</p>
+      <div class="backup-row">
+        <button class="btn-ghost" id="btn-export">Exportar dados (.json)</button>
+        <button class="btn-ghost" id="btn-import-trigger">Importar dados</button>
+      </div>
+      <input type="file" id="file-import" accept="application/json" style="display:none" />
+    </div>
+    <div class="card">
+      <div class="eyebrow">Zona de risco</div>
+      <button class="btn-ghost btn-danger" id="btn-reset">Apagar todos os lançamentos e configurações</button>
+    </div>
+  `;
+}
+
+// ---------- render + eventos ----------
+const VIEWS = {
+  inicio: viewInicio,
+  lancar: viewLancar,
+  historico: viewHistorico,
+  analise: viewAnalise,
+  config: viewConfig,
+};
+
+const NAV = [
+  { id: "inicio", label: "Início", icon: "home" },
+  { id: "lancar", label: "Lançar dia", icon: "plus" },
+  { id: "historico", label: "Histórico", icon: "bar" },
+  { id: "analise", label: "Análise", icon: "trend" },
+  { id: "config", label: "Config", icon: "sliders" },
+];
+
+function render() {
+  const app = document.getElementById("app");
+  app.innerHTML = `
+    <div class="wrap">
+      <div class="header">
+        <div class="brand">
+          <div class="logo">${icon("car", 18)}</div>
+          <div>
+            <div class="title display">Painel do Carro</div>
+            <div class="subtitle">Operação 99 &amp; particular</div>
+          </div>
+        </div>
+        <span class="saving">${esc(state.savingMsg)}</span>
+      </div>
+      <div id="view-container">${VIEWS[state.view]()}</div>
+    </div>
+    <div class="nav">
+      <div class="nav-inner">
+        ${NAV.map(
+          (n) => `
+          <button data-nav="${n.id}" class="${state.view === n.id ? "active" : ""}">
+            ${icon(n.icon, 18)}
+            <span class="nav-label">${n.label}</span>
+          </button>
+        `
+        ).join("")}
+      </div>
+    </div>
+  `;
+  attachEvents();
+}
+
+function attachEvents() {
+  document.querySelectorAll("[data-nav]").forEach((btn) => {
+    btn.addEventListener("click", () => setView(btn.getAttribute("data-nav")));
+  });
+
+  if (state.view === "lancar") {
+    const btn = document.getElementById("btn-save-entry");
+    btn.addEventListener("click", () => {
+      const val = (id) => Number(document.getElementById(id).value) || 0;
+      const entry = {
+        id: Date.now().toString(),
+        date: document.getElementById("f-date").value || todayISO(),
+        km: val("f-km"),
+        ganho99: val("f-ganho99"),
+        ganhoParticular: val("f-ganhoParticular"),
+        gastoCombustivel: val("f-gastoCombustivel"),
+        gastoOutros: val("f-gastoOutros"),
+        horas: val("f-horas"),
+      };
+      persistEntries([...state.entries, entry]);
+      setView("inicio");
+      flashSaved("Lançamento salvo");
+    });
+  }
+
+  if (state.view === "historico") {
+    document.querySelectorAll("[data-del]").forEach((btn) => {
+      btn.addEventListener("click", () => {
+        const id = btn.getAttribute("data-del");
+        persistEntries(state.entries.filter((e) => e.id !== id));
+        render();
+      });
+    });
+  }
+
+  if (state.view === "config") {
+    document.getElementById("btn-save-settings").addEventListener("click", () => {
+      const val = (id) => Number(document.getElementById(id).value) || 0;
+      const next = {
+        kmInicial: val("s-kmInicial"),
+        valorCarro: val("s-valorCarro"),
+        ganhoAcumulado99Inicial: val("s-ganhoAcumulado99Inicial"),
+        metaDiaria: val("s-metaDiaria"),
+        metaHora: val("s-metaHora"),
+        custosFixosMensais: val("s-custosFixosMensais"),
+      };
+      persistSettings(next);
+      flashSaved("Config. salva");
+    });
+
+    document.getElementById("btn-export").addEventListener("click", () => {
+      const payload = JSON.stringify({ settings: state.settings, entries: state.entries }, null, 2);
+      const blob = new Blob([payload], { type: "application/json" });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = url;
+      a.download = `painel99-backup-${todayISO()}.json`;
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
+      URL.revokeObjectURL(url);
+    });
+
+    const fileInput = document.getElementById("file-import");
+    document.getElementById("btn-import-trigger").addEventListener("click", () => fileInput.click());
+    fileInput.addEventListener("change", () => {
+      const file = fileInput.files[0];
+      if (!file) return;
+      const reader = new FileReader();
+      reader.onload = () => {
+        try {
+          const parsed = JSON.parse(reader.result);
+          if (parsed.settings) persistSettings({ ...defaultSettings, ...parsed.settings });
+          if (Array.isArray(parsed.entries)) persistEntries(parsed.entries);
+          render();
+          flashSaved("Dados importados");
+        } catch {
+          alert("Arquivo inválido. Confira se é um backup exportado por este painel.");
+        }
+      };
+      reader.readAsText(file);
+    });
+
+    document.getElementById("btn-reset").addEventListener("click", () => {
+      if (confirm("Isso vai apagar todos os lançamentos e configurações deste navegador. Tem certeza?")) {
+        localStorage.removeItem(SKEY);
+        localStorage.removeItem(EKEY);
+        state.settings = { ...defaultSettings };
+        state.entries = [];
+        setView("inicio");
+      }
+    });
+  }
+}
+
+init();
+
+  </script>
+</body>
+</html>
