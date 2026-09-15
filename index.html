@@ -270,6 +270,7 @@ const EKEY = "painel99_entries";
 const MKEY = "painel99_manutencoes";
 const LKEY = "painel99_lembretes";
 const AKEY = "painel99_abastecimentos";
+const DKEY = "painel99_documentos";
 
 const defaultSettings = {
   kmInicial: 87556,
@@ -291,6 +292,14 @@ const defaultSettings = {
   // ipva: anual, calculado automaticamente também (deixe valor 0 se ainda não quiser rastrear)
   ipvaDataInicio: "",
   ipvaValorAnual: 0,
+  // depreciação: perda de valor do carro — preencha o valor pago pra ativar
+  valorCompraCarro: 0,
+  taxaDepreciacaoAnual: 15, // % ao ano, estimativa simples (não composta)
+  // reserva pra manutenção grande (motor, câmbio, embreagem...)
+  reservaPercentual: 5, // % do ganho na 99 sugerido pra guardar
+  reservaGuardada: 0, // quanto você já separou de fato (atualize manualmente)
+  // plataformas além da 99 (substitui o campo único "ganho particular")
+  plataformas: ["Particular"],
 };
 
 function loadSettings() {
@@ -368,12 +377,144 @@ function saveAbastecimentosToStorage(list) {
   localStorage.setItem(AKEY, JSON.stringify(list));
 }
 
+const DEFAULT_DOCUMENTOS = [
+  { id: "cnh", tipo: "CNH", dataVencimento: "", observacao: "", anexo: null },
+  { id: "crlv", tipo: "CRLV / Licenciamento anual", dataVencimento: "", observacao: "", anexo: null },
+  { id: "toxicologico", tipo: "Exame toxicológico", dataVencimento: "", observacao: "", anexo: null },
+  { id: "ead99", tipo: "Curso EAD da 99", dataVencimento: "", observacao: "", anexo: null },
+];
+
+function loadDocumentos() {
+  try {
+    const raw = localStorage.getItem(DKEY);
+    if (raw === null) {
+      saveDocumentosToStorage(DEFAULT_DOCUMENTOS);
+      return [...DEFAULT_DOCUMENTOS];
+    }
+    return JSON.parse(raw);
+  } catch {
+    return [...DEFAULT_DOCUMENTOS];
+  }
+}
+function saveDocumentosToStorage(list) {
+  localStorage.setItem(DKEY, JSON.stringify(list));
+}
+
 // ---------- helpers ----------
 const fmtR = (n) =>
   (n < 0 ? "-R$ " : "R$ ") + Math.abs(n || 0).toLocaleString("pt-BR", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
 const fmtKm = (n) => (n || 0).toLocaleString("pt-BR", { maximumFractionDigits: 1 }) + " km";
 const todayISO = () => new Date().toISOString().slice(0, 10);
 const esc = (s) => String(s ?? "").replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
+
+// ---------- importação de documentos ----------
+function carregarScript(src) {
+  return new Promise((resolve, reject) => {
+    if (document.querySelector(`script[src="${src}"]`)) return resolve();
+    const s = document.createElement("script");
+    s.src = src;
+    s.onload = () => resolve();
+    s.onerror = () => reject(new Error("Falha ao carregar " + src));
+    document.head.appendChild(s);
+  });
+}
+
+const CDN = {
+  xlsx: "https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js",
+  pdf: "https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.4.120/pdf.min.js",
+  pdfWorker: "https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.4.120/pdf.worker.min.js",
+  mammoth: "https://cdnjs.cloudflare.com/ajax/libs/mammoth/1.6.0/mammoth.browser.min.js",
+};
+
+function normalizeHeader(h) {
+  return String(h)
+    .toLowerCase()
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .replace(/[^a-z0-9]/g, "");
+}
+
+const HEADER_MAP = {
+  data: "date",
+  date: "date",
+  dia: "date",
+  ganho99: "ganho99",
+  ganho: "ganho99",
+  valor: "ganho99",
+  valorganho: "ganho99",
+  km: "km",
+  quilometragem: "km",
+  kmrodado: "km",
+  ganhoparticular: "ganhoParticular",
+  particular: "ganhoParticular",
+  gastocombustivel: "gastoCombustivel",
+  combustivel: "gastoCombustivel",
+  gastooutros: "gastoOutros",
+  outrosgastos: "gastoOutros",
+  outros: "gastoOutros",
+  horas: "horas",
+  horastrabalhadas: "horas",
+};
+
+function parseDateFlexible(v) {
+  if (v instanceof Date && !isNaN(v)) return v.toISOString().slice(0, 10);
+  const s = String(v || "").trim();
+  if (/^\d{4}-\d{2}-\d{2}/.test(s)) return s.slice(0, 10);
+  const br = s.match(/^(\d{1,2})[\/\-](\d{1,2})[\/\-](\d{2,4})$/);
+  if (br) {
+    let [, d, m, y] = br;
+    if (y.length === 2) y = "20" + y;
+    return `${y}-${String(m).padStart(2, "0")}-${String(d).padStart(2, "0")}`;
+  }
+  return null;
+}
+
+// converte linhas (array de arrays, 1ª linha = cabeçalho) em lançamentos, cruzando pelo nome da coluna
+function linhasParaLancamentos(linhas, entriesExistentes) {
+  if (!linhas.length) return { validas: [], invalidas: 0, duplicadas: 0 };
+  const header = linhas[0].map(normalizeHeader);
+  const colIndex = {};
+  header.forEach((h, i) => {
+    let campo = HEADER_MAP[h];
+    if (!campo) {
+      const chave = Object.keys(HEADER_MAP).find((k) => k.length >= 3 && (h.includes(k) || k.includes(h)));
+      campo = chave ? HEADER_MAP[chave] : undefined;
+    }
+    if (campo && colIndex[campo] === undefined) colIndex[campo] = i;
+  });
+  if (colIndex.date === undefined) return { validas: [], invalidas: linhas.length - 1, duplicadas: 0, semColunaData: true };
+
+  const datasExistentes = new Set(entriesExistentes.map((e) => e.date));
+  let invalidas = 0;
+  let duplicadas = 0;
+  const validas = [];
+  for (let i = 1; i < linhas.length; i++) {
+    const linha = linhas[i];
+    if (!linha || !linha.length) continue;
+    const dataISO = parseDateFlexible(linha[colIndex.date]);
+    if (!dataISO) {
+      invalidas++;
+      continue;
+    }
+    if (datasExistentes.has(dataISO)) {
+      duplicadas++;
+      continue;
+    }
+    const num = (idx) => (idx !== undefined ? Number(String(linha[idx]).replace(",", ".")) || 0 : 0);
+    validas.push({
+      id: `import-${dataISO}-${i}`,
+      date: dataISO,
+      km: num(colIndex.km),
+      ganho99: num(colIndex.ganho99),
+      ganhoParticular: num(colIndex.ganhoParticular),
+      gastoCombustivel: num(colIndex.gastoCombustivel),
+      gastoOutros: num(colIndex.gastoOutros),
+      horas: num(colIndex.horas),
+    });
+    datasExistentes.add(dataISO); // evita duplicar se a mesma data aparecer 2x na planilha
+  }
+  return { validas, invalidas, duplicadas };
+}
 
 function addMonthsISO(dateStr, n) {
   const d = new Date(dateStr + "T00:00:00");
@@ -427,7 +568,22 @@ function custoFixoDoDia(dateStr, settings) {
   const custoFinanciamento = financ.ativoHoje ? (settings.financValorParcela || 0) / 30 : 0;
   const custoSeguro = settings.seguroDataInicio && dateStr >= settings.seguroDataInicio ? (settings.seguroValor || 0) / 30 : 0;
   const custoIpva = settings.ipvaDataInicio && settings.ipvaValorAnual && dateStr >= settings.ipvaDataInicio ? settings.ipvaValorAnual / 365 : 0;
-  return custoFinanciamento + custoSeguro + custoIpva;
+  const custoDepreciacao =
+    settings.valorCompraCarro && settings.dataCompra && dateStr >= settings.dataCompra
+      ? (settings.valorCompraCarro * (settings.taxaDepreciacaoAnual || 0)) / 100 / 365
+      : 0;
+  return custoFinanciamento + custoSeguro + custoIpva + custoDepreciacao;
+}
+
+// status da depreciação acumulada do carro (só ativa se o valor de compra foi preenchido)
+function depreciacaoStatus(settings, hoje = todayISO()) {
+  const valorCompra = settings.valorCompraCarro || 0;
+  if (!valorCompra || !settings.dataCompra) return { ativo: false, diaria: 0, acumulada: 0, valorAtualEstimado: 0 };
+  const diaria = (valorCompra * (settings.taxaDepreciacaoAnual || 0)) / 100 / 365;
+  const dias = Math.max(0, Math.round((new Date(hoje + "T00:00:00") - new Date(settings.dataCompra + "T00:00:00")) / 86400000) + 1);
+  const acumulada = diaria * dias;
+  const valorAtualEstimado = Math.max(0, valorCompra - acumulada);
+  return { ativo: true, diaria, acumulada, valorAtualEstimado };
 }
 
 // odômetro base (km inicial + km rodados antes de começar a lançar dia a dia)
@@ -530,6 +686,40 @@ function rankingDias(entries, n = 5) {
   return { melhores, piores };
 }
 
+// soma o ganho de cada plataforma extra (Uber, InDrive, Particular...) lançada nos dias
+function ganhosPorPlataforma(entries) {
+  const totais = {};
+  entries.forEach((e) => {
+    const mapa = e.ganhosExtra && Object.keys(e.ganhosExtra).length ? e.ganhosExtra : e.ganhoParticular ? { Particular: e.ganhoParticular } : {};
+    Object.entries(mapa).forEach(([nome, valor]) => {
+      totais[nome] = (totais[nome] || 0) + (Number(valor) || 0);
+    });
+  });
+  return totais;
+}
+
+const DIAS_SEMANA = ["Domingo", "Segunda", "Terça", "Quarta", "Quinta", "Sexta", "Sábado"];
+
+// média de ganho e lucro por dia da semana, só nos dias em que houve trabalho
+function mediaPorDiaDaSemana(entries, settings) {
+  const grupos = DIAS_SEMANA.map(() => ({ ganho: 0, lucro: 0, count: 0 }));
+  entries
+    .filter((e) => (Number(e.ganho99) || 0) > 0 || (Number(e.km) || 0) > 0)
+    .forEach((e) => {
+      const dia = new Date(e.date + "T00:00:00").getDay();
+      const gasto = (Number(e.gastoCombustivel) || 0) + (Number(e.gastoOutros) || 0) + custoFixoDoDia(e.date, settings);
+      grupos[dia].ganho += Number(e.ganho99) || 0;
+      grupos[dia].lucro += (Number(e.ganho99) || 0) - gasto;
+      grupos[dia].count++;
+    });
+  return DIAS_SEMANA.map((nome, i) => ({
+    dia: nome,
+    mediaGanho: grupos[i].count ? grupos[i].ganho / grupos[i].count : 0,
+    mediaLucro: grupos[i].count ? grupos[i].lucro / grupos[i].count : 0,
+    count: grupos[i].count,
+  }));
+}
+
 function projecaoBreakeven(entries, settings, totals, hoje = todayISO()) {
   if (totals.lucroApp >= 0) return { atingido: true, valor: totals.lucroApp };
   const inicio30 = addDaysISO(hoje, -29);
@@ -541,12 +731,30 @@ function projecaoBreakeven(entries, settings, totals, hoje = todayISO()) {
   return { atingido: false, projetavel: true, diasNecessarios, dataProjetada, mediaDiaria };
 }
 
+// reserva sugerida pra manutenção grande, baseada num % do que já ganhou na 99
+function reservaStatus(totals, settings) {
+  const percentual = settings.reservaPercentual || 0;
+  const sugeridoAcumulado = totals.ganho99 * (percentual / 100);
+  const guardado = settings.reservaGuardada || 0;
+  const falta = Math.max(0, sugeridoAcumulado - guardado);
+  return { percentual, sugeridoAcumulado, guardado, falta };
+}
+
 function lembretesStatus(lembretes, kmAtual) {
   return lembretes.map((l) => {
     const proximaTroca = (Number(l.ultimoKm) || 0) + (Number(l.intervaloKm) || 0);
     const atrasado = kmAtual >= proximaTroca;
     const kmRestante = proximaTroca - kmAtual;
     return { ...l, proximaTroca, atrasado, kmRestante };
+  });
+}
+
+// status de vencimento por data (documentos: CNH, CRLV, exame toxicológico, cursos...)
+function documentosStatus(documentos, hoje = todayISO()) {
+  return documentos.map((d) => {
+    if (!d.dataVencimento) return { ...d, diasRestantes: null, vencido: false, provencendo: false };
+    const diasRestantes = Math.round((new Date(d.dataVencimento + "T00:00:00") - new Date(hoje + "T00:00:00")) / 86400000);
+    return { ...d, diasRestantes, vencido: diasRestantes < 0, provencendo: diasRestantes >= 0 && diasRestantes <= 30 };
   });
 }
 
@@ -582,6 +790,7 @@ let state = {
   manutencoes: [],
   lembretes: [],
   abastecimentos: [],
+  documentos: [],
   savingMsg: "",
   editingEntryId: null,
   historicoFiltroMes: "todos",
@@ -594,6 +803,7 @@ function init() {
   state.manutencoes = loadManutencoes();
   state.lembretes = loadLembretes();
   state.abastecimentos = loadAbastecimentos();
+  state.documentos = loadDocumentos();
   render();
 }
 
@@ -632,6 +842,10 @@ function persistAbastecimentos(next) {
   state.abastecimentos = next;
   saveAbastecimentosToStorage(next);
 }
+function persistDocumentos(next) {
+  state.documentos = next;
+  saveDocumentosToStorage(next);
+}
 
 // ---------- cálculos ----------
 function computeTotals(entries, settings) {
@@ -649,11 +863,12 @@ function computeTotals(entries, settings) {
   const financ = financStatus(settings);
   const seguro = seguroStatus(settings);
   const ipva = ipvaStatus(settings);
-  const custoFixoAcumulado = financ.totalPago + seguro.totalPago + ipva.totalPago;
+  const depreciacao = depreciacaoStatus(settings);
+  const custoFixoAcumulado = financ.totalPago + seguro.totalPago + ipva.totalPago + depreciacao.acumulada;
   const gastoTotal = gastoVariavel + custoFixoAcumulado;
-  const lucroApp = ganho99 - gastoTotal; // saldo 99 x carro, acumulado (já com financiamento + seguro + ipva)
+  const lucroApp = ganho99 - gastoTotal; // saldo 99 x carro, acumulado (já com financiamento + seguro + ipva + depreciação)
   const lucroTotal = ganhoTotal - gastoTotal; // lucro total acumulado (com particular)
-  return { ganho99, ganhoParticular, gastoCombustivel, gastoOutros, gastoVariavel, gastoVariavelLancado, custoPreRastreio, custoFixoAcumulado, financ, seguro, ipva, km, horas, ganhoTotal, gastoTotal, lucroApp, lucroTotal };
+  return { ganho99, ganhoParticular, gastoCombustivel, gastoOutros, gastoVariavel, gastoVariavelLancado, custoPreRastreio, custoFixoAcumulado, financ, seguro, ipva, depreciacao, km, horas, ganhoTotal, gastoTotal, lucroApp, lucroTotal };
 }
 
 function computeHoje(entries, settings) {
@@ -667,11 +882,12 @@ function computeHoje(entries, settings) {
   const custoFinanciamentoHoje = financ.ativoHoje ? (settings.financValorParcela || 0) / 30 : 0;
   const custoSeguroHoje = (settings.seguroValor || 0) / 30;
   const custoIpvaHoje = (settings.ipvaValorAnual || 0) / 365;
-  const custoFixoHoje = custoFinanciamentoHoje + custoSeguroHoje + custoIpvaHoje;
+  const custoDepreciacaoHoje = depreciacaoStatus(settings).diaria;
+  const custoFixoHoje = custoFinanciamentoHoje + custoSeguroHoje + custoIpvaHoje + custoDepreciacaoHoje;
   const gastoTotal = gastoVariavel + custoFixoHoje;
   const saldo99 = ganho99 - gastoTotal;
   const lucroTotal = ganhoTotal - gastoTotal;
-  return { ganho99, ganhoParticular, ganhoTotal, gastoVariavel, custoFixoHoje, custoFinanciamentoHoje, custoSeguroHoje, custoIpvaHoje, gastoTotal, saldo99, lucroTotal, horas: sum("horas") };
+  return { ganho99, ganhoParticular, ganhoTotal, gastoVariavel, custoFixoHoje, custoFinanciamentoHoje, custoSeguroHoje, custoIpvaHoje, custoDepreciacaoHoje, gastoTotal, saldo99, lucroTotal, horas: sum("horas") };
 }
 
 function chartData(entries, settings) {
@@ -795,6 +1011,7 @@ function viewInicio() {
   const hoje = computeHoje(state.entries, state.settings);
   const mes = metaMensalStatus(state.entries, state.settings);
   const semana = metaSemanalStatus(state.entries, state.settings);
+  const reserva = reservaStatus(totals, state.settings);
   const kmTotalDesdeCompra = odometroBase(state.settings) + totals.km;
   const rsPorHoraGeral = totals.horas > 0 ? totals.ganhoTotal / totals.horas : 0;
   const rsPorKm = totals.km > 0 ? totals.ganho99 / totals.km : 0;
@@ -807,6 +1024,8 @@ function viewInicio() {
   const lancouHoje = state.entries.some((e) => e.date === todayISO());
   const lembretes = lembretesStatus(state.lembretes, kmTotalDesdeCompra);
   const atrasados = lembretes.filter((l) => l.atrasado).length;
+  const docs = documentosStatus(state.documentos);
+  const docsProblema = docs.filter((d) => d.vencido || d.provencendo).length;
 
   const banners = `
     ${!lancouHoje ? `
@@ -826,6 +1045,16 @@ function viewInicio() {
           <div>
             <div style="font-size:13px;">${atrasados} manutenç${atrasados > 1 ? "ões" : "ão"} atrasada${atrasados > 1 ? "s" : ""}</div>
             <div class="footnote">Toca aqui pra ver o que precisa fazer</div>
+          </div>
+        </div>
+      </div>` : ""}
+    ${docsProblema > 0 ? `
+      <div class="card" data-nav="manutencao" style="cursor:pointer;border-color:#E8B430;">
+        <div style="display:flex;align-items:center;gap:10px;">
+          ${icon("alert", 18)}
+          <div>
+            <div style="font-size:13px;">${docsProblema} documento${docsProblema > 1 ? "s" : ""} vencido${docsProblema > 1 ? "s" : ""} ou vencendo</div>
+            <div class="footnote">Toca aqui pra conferir</div>
           </div>
         </div>
       </div>` : ""}
@@ -866,6 +1095,14 @@ function viewInicio() {
         <div class="mono" style="font-size:16px;color:${hoje.lucroTotal >= 0 ? "#3FA796" : "#E85D5D"}">${fmtR(hoje.lucroTotal)}</div>
       </div>
       ${hoje.ganhoParticular > 0 ? `<div class="footnote">inclui ${fmtR(hoje.ganhoParticular)} de renda particular — não entra na conta de "a 99 paga o carro"</div>` : ""}
+    </div>
+
+    <div class="card">
+      <div style="display:flex;align-items:center;justify-content:space-between;">
+        <div class="eyebrow" style="margin-bottom:0;">Reserva pra manutenção grande (${reserva.percentual}% do ganho)</div>
+        <div class="mono" style="font-size:16px;">${fmtR(reserva.sugeridoAcumulado)}</div>
+      </div>
+      <div class="footnote">${reserva.guardado > 0 ? `Você já separou ${fmtR(reserva.guardado)} — falta ${fmtR(reserva.falta)} pra bater a sugestão` : "Atualize quanto já guardou em Config → Reserva"}</div>
     </div>
 
     <div class="card">
@@ -958,7 +1195,13 @@ function viewLancar() {
         <div class="footnote" id="f-km-preview">Km rodado no dia: calculado automaticamente</div>
       </div>
       <div class="field"><label>${icon("briefcase")} Ganho na 99 (R$)</label><input type="number" min="0" step="0.01" id="f-ganho99" placeholder="0" value="${v("ganho99", "")}" /></div>
-      <div class="field"><label>${icon("wrench")} Ganho particular / escritórios (R$)</label><input type="number" min="0" step="0.01" id="f-ganhoParticular" placeholder="0" value="${v("ganhoParticular", "")}" /></div>
+      ${state.settings.plataformas
+        .map((nome, i) => {
+          const ganhosExtra = editing && editing.ganhosExtra ? editing.ganhosExtra : null;
+          const valorCampo = ganhosExtra && ganhosExtra[nome] !== undefined ? ganhosExtra[nome] : i === 0 ? v("ganhoParticular", "") : "";
+          return `<div class="field"><label>${icon("wrench")} Ganho em ${esc(nome)} (R$)</label><input type="number" min="0" step="0.01" class="f-plataforma" data-plataforma="${esc(nome)}" placeholder="0" value="${valorCampo}" /></div>`;
+        })
+        .join("")}
       <div class="field">
         <label>${icon("fuel")} Gasto com combustível (R$)</label>
         <input type="number" min="0" step="0.01" id="f-gastoCombustivel" placeholder="0" value="${v("gastoCombustivel", "")}" />
@@ -1056,6 +1299,8 @@ function viewAnalise() {
   const cmp = compararPeriodos(state.entries, state.settings);
   const rank = rankingDias(state.entries, 5);
   const breakeven = projecaoBreakeven(state.entries, state.settings, totals);
+  const diaSemana = mediaPorDiaDaSemana(state.entries, state.settings);
+  const porPlataforma = ganhosPorPlataforma(state.entries);
 
   const linhaComparacao = (label, atual, anterior) => {
     const dif = atual - anterior;
@@ -1115,6 +1360,45 @@ function viewAnalise() {
              <div class="footnote">Faltam ${breakeven.diasNecessarios} dias, a um ritmo médio de ${fmtR(breakeven.mediaDiaria)}/dia de saldo 99 x carro.</div>`
           : `<div class="footnote">No ritmo dos últimos 30 dias o carro ainda não se paga — o saldo médio diário está zero ou negativo.</div>`
       }
+    </div>
+
+    <div class="card">
+      <div class="eyebrow">Melhor dia da semana pra trabalhar</div>
+      ${diaSemana
+        .filter((d) => d.count > 0)
+        .sort((a, b) => b.mediaLucro - a.mediaLucro)
+        .map(
+          (d) => `
+        <div class="stat-row">
+          <span class="label">${d.dia} <span style="color:var(--muted);font-size:11px;">(${d.count}x)</span></span>
+          <span class="value" style="color:${d.mediaLucro >= 0 ? "#3FA796" : "#E85D5D"}">${fmtR(d.mediaLucro)}/dia</span>
+        </div>`
+        )
+        .join("") || `<div class="empty">Sem dias trabalhados suficientes ainda</div>`}
+      <div class="footnote">Média de lucro (99 − gasto) por dia da semana, nos dias em que você trabalhou. Não separa por horário — só por dia.</div>
+    </div>
+
+    ${
+      Object.keys(porPlataforma).length
+        ? `
+    <div class="card">
+      <div class="eyebrow">Ganho por plataforma (além da 99)</div>
+      ${Object.entries(porPlataforma)
+        .sort((a, b) => b[1] - a[1])
+        .map(([nome, valor]) => `<div class="stat-row"><span class="label">${esc(nome)}</span><span class="value">${fmtR(valor)}</span></div>`)
+        .join("")}
+      <div class="footnote">Total acumulado por plataforma, desde o início. Cadastre/edite as plataformas em Config.</div>
+    </div>`
+        : ""
+    }
+
+    <div class="card">
+      <div class="eyebrow">Calculadora reversa de meta</div>
+      <p class="note">Quanto você precisa rodar/ganhar por dia pra bater uma meta.</p>
+      <div class="field"><label>Quanto quer ganhar (R$)</label><input type="number" min="0" step="0.01" id="calc-meta" placeholder="8000" /></div>
+      <div class="field"><label>Em quantos dias</label><input type="number" min="1" step="1" id="calc-dias" placeholder="30" /></div>
+      <button class="btn-primary" id="btn-calcular-meta">Calcular</button>
+      <div id="calc-resultado" style="margin-top:14px;"></div>
     </div>
   `;
 }
@@ -1187,6 +1471,57 @@ function viewAbastecimento() {
 
     <div class="eyebrow" style="margin-left:2px;">Histórico de abastecimentos</div>
     ${lista || `<div class="card"><div class="empty">Nenhum abastecimento registrado ainda.</div></div>`}
+  `;
+}
+
+function viewDocumentos() {
+  const docs = documentosStatus(state.documentos);
+
+  const cards = docs
+    .map((d) => {
+      const statusHtml = d.dataVencimento
+        ? d.vencido
+          ? `<span style="color:#E85D5D;">Vencido há ${Math.abs(d.diasRestantes)} dias</span>`
+          : d.provencendo
+          ? `<span style="color:#E8B430;">Vence em ${d.diasRestantes} dias</span>`
+          : `<span style="color:#3FA796;">Em dia (${d.diasRestantes} dias)</span>`
+        : `<span style="color:var(--muted);">Sem data cadastrada</span>`;
+
+      const anexoHtml = d.anexo
+        ? `
+        <div class="footnote" style="margin-bottom:8px;">
+          Anexo: <a href="${d.anexo.dataUrl}" download="${esc(d.anexo.name)}" style="color:#E8B430;">${esc(d.anexo.name)}</a>
+          <button class="icon-btn" data-del-anexo="${d.id}" style="display:inline;">${icon("trash", 13)}</button>
+        </div>`
+        : `<div class="footnote" style="margin-bottom:8px;">Sem anexo</div>`;
+
+      return `
+      <div class="card">
+        <div class="hist-top">
+          <input type="text" class="filter-select" style="font-weight:500;width:auto;flex:1;margin-right:8px;" id="doc-tipo-${d.id}" value="${esc(d.tipo)}" />
+          <button class="icon-btn" data-del-doc="${d.id}">${icon("trash", 15)}</button>
+        </div>
+        <div class="footnote" style="margin-bottom:10px;">${statusHtml}</div>
+        <div class="field"><label>Data de vencimento</label><input type="date" id="doc-data-${d.id}" value="${d.dataVencimento || ""}" /></div>
+        <div class="field"><label>Observação</label><input type="text" id="doc-obs-${d.id}" value="${esc(d.observacao || "")}" placeholder="Opcional" /></div>
+        ${anexoHtml}
+        <div class="field"><label>Anexar arquivo (PDF, imagem, Word, Excel...)</label><input type="file" id="doc-anexo-${d.id}" /></div>
+        <button class="btn-primary" data-save-doc="${d.id}">Salvar</button>
+      </div>`;
+    })
+    .join("");
+
+  return `
+    <div class="card">
+      <div class="eyebrow">Documentos e vencimentos</div>
+      <p class="note">CNH, CRLV, exame toxicológico, cursos da 99... o que vence por data (não por km) fica aqui. Dá pra anexar o arquivo (foto, PDF, Word, Excel) de cada um.</p>
+    </div>
+    ${cards}
+    <div class="card">
+      <div class="eyebrow">Novo documento</div>
+      <div class="field"><label>Tipo</label><input type="text" id="doc-novo-tipo" placeholder="Ex: Seguro do celular" /></div>
+      <button class="btn-primary" id="btn-add-doc">Adicionar documento</button>
+    </div>
   `;
 }
 
@@ -1275,9 +1610,37 @@ function viewConfig() {
       <div class="eyebrow">Metas</div>
       <p class="note">Isso é o único que você ajusta com frequência — o resto o painel calcula sozinho.</p>
       <div class="field"><label>Meta de ganho por dia — na 99 (R$)</label><input type="number" step="0.01" id="s-metaDiaria" value="${s.metaDiaria}" /></div>
+      <div class="field"><label>Meta de ganho por semana — na 99 (R$)</label><input type="number" step="0.01" id="s-metaSemanal" value="${s.metaSemanal}" /></div>
       <div class="field"><label>Meta de ganho por hora (R$)</label><input type="number" step="0.01" id="s-metaHora" value="${s.metaHora}" /></div>
       <div class="field"><label>Meta de ganho por mês — na 99 (R$)</label><input type="number" step="0.01" id="s-metaMensal" value="${s.metaMensal}" /></div>
       <button class="btn-primary" id="btn-save-settings">Salvar metas</button>
+    </div>
+
+    <div class="card">
+      <div class="eyebrow">Reserva pra manutenção grande</div>
+      <p class="note">Sugestão automática de quanto guardar pra motor, câmbio, embreagem — baseado num % do que você ganha na 99.</p>
+      <div class="field"><label>% do ganho na 99 sugerido pra guardar</label><input type="number" step="0.1" id="s-reservaPercentual" value="${s.reservaPercentual}" /></div>
+      <div class="field"><label>Quanto você já guardou de fato (R$)</label><input type="number" step="0.01" id="s-reservaGuardada" value="${s.reservaGuardada}" /></div>
+      <button class="btn-primary" id="btn-save-reserva">Salvar reserva</button>
+    </div>
+
+    <div class="card">
+      <div class="eyebrow">Plataformas além da 99</div>
+      <p class="note">Se você também roda Uber, InDrive ou faz corridas particulares, cadastre cada uma aqui — elas aparecem como campos separados no Lançamento e na Análise.</p>
+      ${s.plataformas
+        .map(
+          (nome, i) => `
+        <div class="field" style="display:flex;gap:8px;align-items:flex-end;">
+          <div style="flex:1;">
+            <label>Plataforma ${i + 1}</label>
+            <input type="text" class="s-plataforma-nome" value="${esc(nome)}" />
+          </div>
+          ${s.plataformas.length > 1 ? `<button class="icon-btn" data-del-plataforma="${i}" style="padding-bottom:10px;">${icon("trash", 16)}</button>` : ""}
+        </div>`
+        )
+        .join("")}
+      <button class="btn-ghost" id="btn-add-plataforma" style="margin-bottom:10px;">+ Adicionar plataforma</button>
+      <button class="btn-primary" id="btn-save-plataformas">Salvar plataformas</button>
     </div>
 
     <div class="card">
@@ -1287,6 +1650,8 @@ function viewConfig() {
       <div class="stat-row"><span class="label">${icon("clock")} Última parcela do financiamento</span><span class="value">${totals.financ.dataUltimaParcela}${totals.financ.quitado ? " (quitado)" : ""}</span></div>
       <div class="stat-row"><span class="label">${icon("wrench")} Seguro pago (${totals.seguro.parcelasPagas} meses)</span><span class="value">${fmtR(totals.seguro.totalPago)}</span></div>
       ${s.ipvaValorAnual ? `<div class="stat-row"><span class="label">${icon("wrench")} IPVA pago (${totals.ipva.parcelasPagas} anos)</span><span class="value">${fmtR(totals.ipva.totalPago)}</span></div>` : ""}
+      ${totals.depreciacao.ativo ? `<div class="stat-row"><span class="label">${icon("trend")} Depreciação acumulada</span><span class="value">${fmtR(totals.depreciacao.acumulada)}</span></div>` : ""}
+      ${totals.depreciacao.ativo ? `<div class="stat-row"><span class="label">${icon("car")} Valor atual estimado do carro</span><span class="value">${fmtR(totals.depreciacao.valorAtualEstimado)}</span></div>` : ""}
       <div class="footnote">Esses valores mudam sozinhos a cada mês que passa. Não dá pra editar direto — só ajustando os parâmetros abaixo, se algo estiver errado.</div>
     </div>
 
@@ -1296,6 +1661,8 @@ function viewConfig() {
       <div class="field"><label>Data da compra do carro (estimada, se não souber a exata)</label><input type="date" id="s-dataCompra" value="${s.dataCompra}" /></div>
       <div class="field"><label>Km rodados entre a compra e o início dos lançamentos diários</label><input type="number" step="0.01" id="s-kmPreRastreio" value="${s.kmPreRastreio}" /></div>
       <div class="field"><label>Combustível/manutenção estimado nesse período pré-rastreio (R$)</label><input type="number" step="0.01" id="s-custoPreRastreio" value="${s.custoPreRastreio}" /></div>
+      <div class="field"><label>Valor pago pelo carro na compra (R$) — deixe 0 pra não calcular depreciação</label><input type="number" step="0.01" id="s-valorCompraCarro" value="${s.valorCompraCarro}" /></div>
+      <div class="field"><label>Depreciação estimada por ano (%)</label><input type="number" step="0.1" id="s-taxaDepreciacaoAnual" value="${s.taxaDepreciacaoAnual}" /></div>
       <div class="field"><label>Data da 1ª parcela do financiamento</label><input type="date" id="s-financDataInicio" value="${s.financDataInicio}" /></div>
       <div class="field"><label>Valor da entrada do financiamento (R$)</label><input type="number" step="0.01" id="s-financEntrada" value="${s.financEntrada}" /></div>
       <div class="field"><label>Valor de cada parcela do financiamento (R$)</label><input type="number" step="0.01" id="s-financValorParcela" value="${s.financValorParcela}" /></div>
@@ -1319,6 +1686,17 @@ function viewConfig() {
       </div>
       <input type="file" id="file-import" accept="application/json" style="display:none" />
     </div>
+
+    <div class="card">
+      <div class="eyebrow">Importar de outro documento</div>
+      <p class="note">
+        <b>Excel/CSV:</b> importa os lançamentos direto, cruzando as colunas pelo nome (data, ganho99, km, ganho particular, combustível, outros gastos, horas).<br/>
+        <b>PDF/Word:</b> extraio o texto pra você conferir e copiar os números — não preencho sozinho, porque cada documento vem num formato diferente.<br/>
+        <b>Imagem (foto/print):</b> só guardo como anexo — sem leitura automática do conteúdo.
+      </p>
+      <input type="file" id="import-doc-file" accept=".xlsx,.xls,.csv,.pdf,.doc,.docx,.png,.jpg,.jpeg,.webp" />
+      <div id="import-doc-resultado" style="margin-top:14px;"></div>
+    </div>
     <div class="card">
       <div class="eyebrow">Zona de risco</div>
       <button class="btn-ghost btn-danger" id="btn-reset">Apagar todos os lançamentos e configurações</button>
@@ -1331,7 +1709,7 @@ const VIEWS = {
   inicio: viewInicio,
   lancar: viewLancar,
   historico: viewHistorico,
-  manutencao: () => viewAbastecimento() + viewManutencao(),
+  manutencao: () => viewAbastecimento() + viewManutencao() + viewDocumentos(),
   analise: viewAnalise,
   config: viewConfig,
 };
@@ -1436,11 +1814,18 @@ function attachEvents() {
         if (!seguir) return;
       }
       const kmDia = Math.max(0, odometro - ref);
+      const ganhosExtra = {};
+      document.querySelectorAll(".f-plataforma").forEach((input) => {
+        const nome = input.getAttribute("data-plataforma");
+        ganhosExtra[nome] = Number(input.value) || 0;
+      });
+      const ganhoParticularTotal = Object.values(ganhosExtra).reduce((a, v2) => a + v2, 0);
       const dados = {
         date: dateVal,
         km: kmDia,
         ganho99: val("f-ganho99"),
-        ganhoParticular: val("f-ganhoParticular"),
+        ganhoParticular: ganhoParticularTotal,
+        ganhosExtra,
         gastoCombustivel: val("f-gastoCombustivel"),
         gastoOutros: val("f-gastoOutros"),
         horas: val("f-horas"),
@@ -1512,6 +1897,66 @@ function attachEvents() {
   }
 
   if (state.view === "manutencao") {
+    document.querySelectorAll("[data-save-doc]").forEach((btn) => {
+      btn.addEventListener("click", () => {
+        const id = btn.getAttribute("data-save-doc");
+        const tipo = document.getElementById(`doc-tipo-${id}`).value.trim();
+        const dataVencimento = document.getElementById(`doc-data-${id}`).value;
+        const observacao = document.getElementById(`doc-obs-${id}`).value.trim();
+        const fileInput = document.getElementById(`doc-anexo-${id}`);
+        const file = fileInput.files && fileInput.files[0];
+
+        const aplicarEAtualizar = (anexo) => {
+          const next = state.documentos.map((d) => (d.id === id ? { ...d, tipo: tipo || d.tipo, dataVencimento, observacao, ...(anexo ? { anexo } : {}) } : d));
+          persistDocumentos(next);
+          render();
+          flashSaved("Documento salvo");
+        };
+
+        if (file) {
+          if (file.size > 3 * 1024 * 1024) {
+            alert("Arquivo muito grande pra guardar no navegador (máx. ~3MB). Tente uma versão menor ou comprimida.");
+            aplicarEAtualizar(null);
+            return;
+          }
+          const reader = new FileReader();
+          reader.onload = () => aplicarEAtualizar({ name: file.name, type: file.type, dataUrl: reader.result });
+          reader.readAsDataURL(file);
+        } else {
+          aplicarEAtualizar(null);
+        }
+      });
+    });
+
+    document.querySelectorAll("[data-del-anexo]").forEach((btn) => {
+      btn.addEventListener("click", () => {
+        const id = btn.getAttribute("data-del-anexo");
+        const next = state.documentos.map((d) => (d.id === id ? { ...d, anexo: null } : d));
+        persistDocumentos(next);
+        render();
+      });
+    });
+
+    document.querySelectorAll("[data-del-doc]").forEach((btn) => {
+      btn.addEventListener("click", () => {
+        const id = btn.getAttribute("data-del-doc");
+        persistDocumentos(state.documentos.filter((d) => d.id !== id));
+        render();
+      });
+    });
+
+    const btnAddDoc = document.getElementById("btn-add-doc");
+    if (btnAddDoc) {
+      btnAddDoc.addEventListener("click", () => {
+        const tipo = document.getElementById("doc-novo-tipo").value.trim();
+        if (!tipo) return;
+        const novo = { id: Date.now().toString(), tipo, dataVencimento: "", observacao: "", anexo: null };
+        persistDocumentos([...state.documentos, novo]);
+        render();
+        flashSaved("Documento adicionado");
+      });
+    }
+
     document.getElementById("btn-add-abast").addEventListener("click", () => {
       const litros = Number(document.getElementById("a-litros").value) || 0;
       const preco = Number(document.getElementById("a-preco").value) || 0;
@@ -1594,17 +2039,76 @@ function attachEvents() {
     });
   }
 
+  if (state.view === "analise") {
+    document.getElementById("btn-calcular-meta").addEventListener("click", () => {
+      const meta = Number(document.getElementById("calc-meta").value) || 0;
+      const dias = Number(document.getElementById("calc-dias").value) || 0;
+      const resultadoEl = document.getElementById("calc-resultado");
+      if (meta <= 0 || dias <= 0) {
+        resultadoEl.innerHTML = `<div class="footnote" style="color:#E85D5D;">Preencha a meta e os dias.</div>`;
+        return;
+      }
+      const totals = computeTotals(state.entries, state.settings);
+      const rsPorKm = totals.km > 0 ? totals.ganho99 / totals.km : 0;
+      const rsPorHora = totals.horas > 0 ? totals.ganhoTotal / totals.horas : 0;
+      const porDia = meta / dias;
+      const kmPorDia = rsPorKm > 0 ? porDia / rsPorKm : null;
+      const horasPorDia = rsPorHora > 0 ? porDia / rsPorHora : null;
+      resultadoEl.innerHTML = `
+        <div class="stat-row"><span class="label">Por dia, você precisa ganhar</span><span class="value">${fmtR(porDia)}</span></div>
+        ${kmPorDia !== null ? `<div class="stat-row"><span class="label">Km por dia (no seu R$/km médio)</span><span class="value">${fmtKm(kmPorDia)}</span></div>` : ""}
+        ${horasPorDia !== null ? `<div class="stat-row"><span class="label">Horas por dia (no seu R$/hora médio)</span><span class="value">${horasPorDia.toFixed(1)}h</span></div>` : ""}
+        ${!kmPorDia && !horasPorDia ? `<div class="footnote">Lance alguns dias com km e horas primeiro pra eu calcular a conversão.</div>` : ""}
+      `;
+    });
+  }
+
   if (state.view === "config") {
     document.getElementById("btn-save-settings").addEventListener("click", () => {
       const val = (id) => Number(document.getElementById(id).value) || 0;
       const next = {
         ...state.settings,
         metaDiaria: val("s-metaDiaria"),
+        metaSemanal: val("s-metaSemanal"),
         metaHora: val("s-metaHora"),
         metaMensal: val("s-metaMensal"),
       };
       persistSettings(next);
       flashSaved("Metas salvas");
+    });
+
+    document.getElementById("btn-save-reserva").addEventListener("click", () => {
+      const val = (id) => Number(document.getElementById(id).value) || 0;
+      const next = {
+        ...state.settings,
+        reservaPercentual: val("s-reservaPercentual"),
+        reservaGuardada: val("s-reservaGuardada"),
+      };
+      persistSettings(next);
+      flashSaved("Reserva salva");
+    });
+
+    document.getElementById("btn-add-plataforma").addEventListener("click", () => {
+      const next = { ...state.settings, plataformas: [...state.settings.plataformas, "Nova plataforma"] };
+      persistSettings(next);
+      render();
+    });
+
+    document.querySelectorAll("[data-del-plataforma]").forEach((btn) => {
+      btn.addEventListener("click", () => {
+        const idx = Number(btn.getAttribute("data-del-plataforma"));
+        const next = { ...state.settings, plataformas: state.settings.plataformas.filter((_, i) => i !== idx) };
+        persistSettings(next);
+        render();
+      });
+    });
+
+    document.getElementById("btn-save-plataformas").addEventListener("click", () => {
+      const nomes = [...document.querySelectorAll(".s-plataforma-nome")].map((inp) => inp.value.trim()).filter(Boolean);
+      const next = { ...state.settings, plataformas: nomes.length ? nomes : ["Particular"] };
+      persistSettings(next);
+      render();
+      flashSaved("Plataformas salvas");
     });
 
     document.getElementById("btn-save-params").addEventListener("click", () => {
@@ -1616,6 +2120,8 @@ function attachEvents() {
         dataCompra: date("s-dataCompra"),
         kmPreRastreio: val("s-kmPreRastreio"),
         custoPreRastreio: val("s-custoPreRastreio"),
+        valorCompraCarro: val("s-valorCompraCarro"),
+        taxaDepreciacaoAnual: val("s-taxaDepreciacaoAnual"),
         financDataInicio: date("s-financDataInicio"),
         financEntrada: val("s-financEntrada"),
         financValorParcela: val("s-financValorParcela"),
@@ -1632,7 +2138,7 @@ function attachEvents() {
 
     document.getElementById("btn-export").addEventListener("click", () => {
       const payload = JSON.stringify(
-        { settings: state.settings, entries: state.entries, manutencoes: state.manutencoes, lembretes: state.lembretes, abastecimentos: state.abastecimentos },
+        { settings: state.settings, entries: state.entries, manutencoes: state.manutencoes, lembretes: state.lembretes, abastecimentos: state.abastecimentos, documentos: state.documentos },
         null,
         2
       );
@@ -1677,6 +2183,7 @@ function attachEvents() {
           if (Array.isArray(parsed.entries)) persistEntries(parsed.entries);
           if (Array.isArray(parsed.manutencoes)) persistManutencoes(parsed.manutencoes);
           if (Array.isArray(parsed.abastecimentos)) persistAbastecimentos(parsed.abastecimentos);
+          if (Array.isArray(parsed.documentos)) persistDocumentos(parsed.documentos);
           if (Array.isArray(parsed.lembretes)) persistLembretes(parsed.lembretes);
           render();
           flashSaved("Dados importados");
@@ -1687,18 +2194,109 @@ function attachEvents() {
       reader.readAsText(file);
     });
 
+    const importDocInput = document.getElementById("import-doc-file");
+    const importDocResultado = document.getElementById("import-doc-resultado");
+
+    importDocInput.addEventListener("change", async () => {
+      const file = importDocInput.files[0];
+      if (!file) return;
+      const nome = file.name.toLowerCase();
+      importDocResultado.innerHTML = `<div class="footnote">Lendo ${esc(file.name)}...</div>`;
+
+      try {
+        if (nome.endsWith(".xlsx") || nome.endsWith(".xls")) {
+          await carregarScript(CDN.xlsx);
+          const buffer = await file.arrayBuffer();
+          const wb = XLSX.read(buffer, { type: "array", cellDates: true });
+          const sheet = wb.Sheets[wb.SheetNames[0]];
+          const linhas = XLSX.utils.sheet_to_json(sheet, { header: 1, raw: false, dateNF: "yyyy-mm-dd" });
+          renderizarPreviewImportacao(linhas);
+        } else if (nome.endsWith(".csv")) {
+          const texto = await file.text();
+          const linhas = texto
+            .split(/\r?\n/)
+            .filter((l) => l.trim())
+            .map((l) => l.split(","));
+          renderizarPreviewImportacao(linhas);
+        } else if (nome.endsWith(".pdf")) {
+          await carregarScript(CDN.pdf);
+          pdfjsLib.GlobalWorkerOptions.workerSrc = CDN.pdfWorker;
+          const buffer = await file.arrayBuffer();
+          const pdf = await pdfjsLib.getDocument({ data: buffer }).promise;
+          let textoCompleto = "";
+          for (let p = 1; p <= pdf.numPages; p++) {
+            const page = await pdf.getPage(p);
+            const content = await page.getTextContent();
+            textoCompleto += content.items.map((it) => it.str).join(" ") + "\n\n";
+          }
+          importDocResultado.innerHTML = `
+            <div class="footnote" style="margin-bottom:8px;">Texto extraído do PDF (${pdf.numPages} página${pdf.numPages > 1 ? "s" : ""}) — copie os números que precisar:</div>
+            <textarea readonly style="width:100%;height:220px;background:var(--card-alt);border:1px solid var(--border);border-radius:10px;padding:10px;color:var(--text);font-size:12px;font-family:monospace;">${esc(textoCompleto)}</textarea>
+          `;
+        } else if (nome.endsWith(".docx")) {
+          await carregarScript(CDN.mammoth);
+          const buffer = await file.arrayBuffer();
+          const resultado = await mammoth.extractRawText({ arrayBuffer: buffer });
+          importDocResultado.innerHTML = `
+            <div class="footnote" style="margin-bottom:8px;">Texto extraído do Word — copie os números que precisar:</div>
+            <textarea readonly style="width:100%;height:220px;background:var(--card-alt);border:1px solid var(--border);border-radius:10px;padding:10px;color:var(--text);font-size:12px;font-family:monospace;">${esc(resultado.value)}</textarea>
+          `;
+        } else if (nome.endsWith(".doc")) {
+          importDocResultado.innerHTML = `<div class="footnote" style="color:#E8B430;">Arquivo .doc antigo não tem leitura de texto suportada aqui — salve como .docx no Word e tente de novo, ou anexe direto num documento em Carro → Documentos.</div>`;
+        } else if (nome.match(/\.(png|jpe?g|webp)$/)) {
+          const reader2 = new FileReader();
+          reader2.onload = () => {
+            importDocResultado.innerHTML = `
+              <div class="footnote" style="margin-bottom:8px;">Não faço leitura automática do conteúdo de imagens (sem OCR). Se quiser guardar como comprovante, anexe em Carro → Documentos.</div>
+              <img src="${reader2.result}" style="max-width:100%;border-radius:10px;border:1px solid var(--border);" />
+            `;
+          };
+          reader2.readAsDataURL(file);
+        } else {
+          importDocResultado.innerHTML = `<div class="footnote" style="color:#E8B430;">Formato não suportado pra leitura aqui. Você ainda pode anexar esse arquivo num documento em Carro → Documentos.</div>`;
+        }
+      } catch (err) {
+        importDocResultado.innerHTML = `<div class="footnote" style="color:#E85D5D;">Não consegui ler esse arquivo (${esc(err.message)}). Verifique sua conexão — algumas leituras precisam carregar uma biblioteca externa.</div>`;
+      }
+    });
+
+    function renderizarPreviewImportacao(linhas) {
+      const resultado = linhasParaLancamentos(linhas, state.entries);
+      if (resultado.semColunaData) {
+        importDocResultado.innerHTML = `<div class="footnote" style="color:#E85D5D;">Não encontrei uma coluna de data na planilha. Renomeie a coluna pra "data" e tente de novo.</div>`;
+        return;
+      }
+      const resumo = `${resultado.validas.length} lançamento${resultado.validas.length !== 1 ? "s" : ""} pronto${resultado.validas.length !== 1 ? "s" : ""} pra importar` +
+        (resultado.duplicadas ? `, ${resultado.duplicadas} ignorado(s) por já ter lançamento nessa data` : "") +
+        (resultado.invalidas ? `, ${resultado.invalidas} linha(s) com data inválida` : "");
+      importDocResultado.innerHTML = `
+        <div class="footnote" style="margin-bottom:10px;">${resumo}</div>
+        ${resultado.validas.length ? `<button class="btn-primary" id="btn-confirmar-import-planilha">Importar ${resultado.validas.length} lançamentos</button>` : ""}
+      `;
+      const btnConfirmar = document.getElementById("btn-confirmar-import-planilha");
+      if (btnConfirmar) {
+        btnConfirmar.addEventListener("click", () => {
+          persistEntries([...state.entries, ...resultado.validas]);
+          importDocResultado.innerHTML = `<div class="footnote" style="color:#3FA796;">${resultado.validas.length} lançamentos importados!</div>`;
+          flashSaved("Lançamentos importados");
+        });
+      }
+    }
+
     document.getElementById("btn-reset").addEventListener("click", () => {
       if (confirm("Isso vai apagar todos os lançamentos e configurações deste navegador. Tem certeza?")) {
         localStorage.setItem(EKEY, JSON.stringify([]));
         localStorage.removeItem(SKEY);
         localStorage.setItem(MKEY, JSON.stringify([]));
         localStorage.setItem(AKEY, JSON.stringify([]));
+        localStorage.setItem(DKEY, JSON.stringify(DEFAULT_DOCUMENTOS));
         localStorage.setItem(LKEY, JSON.stringify(DEFAULT_LEMBRETES));
         state.settings = { ...defaultSettings };
         state.entries = [];
         state.manutencoes = [];
         state.lembretes = [...DEFAULT_LEMBRETES];
         state.abastecimentos = [];
+        state.documentos = [...DEFAULT_DOCUMENTOS];
         setView("inicio");
       }
     });
